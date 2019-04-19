@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <title>模拟Vue，实现一个双向绑定</title>
+</head>
+
+<body>
+  <div id='app'>
+    <p>{{msg}}</p>
+    <br/>
+    <input v-m='test' type="text">
+    <p>{{test}}</p>
+  </div>
+</body>
+<script>
+  /*
+  第三步
+  
+  1,实现一个 watcher 观察者/订阅者
+    订阅者原型上挂在两个方法 分别是
+    update 渲染视图
+
+  2,定义一个消息订阅器
+    很简单，维护一个数组，用来收集订阅者
+    消息订阅器原型挂载两个方法 分别是  
+    addSub 添加一个订阅者   
+    notify 数据变动 通知 这个订阅者的 update 方法
+  */
+  function Watcher(vm, node, name, nodeType) {
+    Dep.target = this;
+    this.vm = vm;
+    this.node = node;
+    this.name = name;
+    this.nodeType = nodeType;
+    this.update();
+    console.log(Dep.target)
+    Dep.target = null;
+  }
+  Watcher.prototype = {
+    update: function () {
+      /*
+      this.node 指向当前修改的 dom 元素
+      this.vm 指向当前 dom 的实例对象
+      根据 nodeType 类型 赋值渲染页面
+      */
+      if (this.nodeType === 'text') {
+        this.node.nodeValue = this.vm[this.name]
+      }
+      if (this.nodeType === 'input') {
+        this.node.value = this.vm[this.name]
+      }
+    }
+  }
+  function Dep() {
+    this.subs = [];
+  }
+  Dep.prototype = {
+    addSub: function (sub) {
+      this.subs.push(sub);
+    },
+    notify: function () {
+      this.subs.forEach(function (sub) {
+        sub.update();
+      });
+    }
+  }
+
+  /* 
+  第二步
+  实现一个数据监听
+  1，获取当前实例对象的  data 属性 key  
+     observer（当前实例对象 data ，当前实例对象）
+  2，使用 Object.defineProperty 方法 实现监听 
+  */
+  function observe(data, vm) {
+    Object.keys(data).forEach(function (key) {
+      defineReactive(vm, key, data[key]);
+    });
+  }
+  function defineReactive(vm, key, val) {
+    /*
+    Object.defineProperty
+    obj
+    要在其上定义属性的对象。
+    prop
+    要定义或修改的属性的名称。
+    descriptor
+    将被定义或修改的属性描述符。 描述符有很多，就包括我们要市用 set ， get 方法
+    */
+    var dep = new Dep();
+    Object.defineProperty(vm, key, {
+      get: function () {
+        /* 
+        if (Dep.target) dep.addSub(Dep.target);
+        看到这段代码不要差异，生成每一个 dom节点，都会走 get 方法
+        这里为每一个节点 添加一个订阅者 到主题对象 Dep
+        */
+        if (Dep.target) dep.addSub(Dep.target);
+        console.log(val)
+        return val;
+      },
+      set: function (newValue) {
+        if (newValue === val) return;
+        val = newValue;
+        console.log(val + "=>" + newValue)
+        // 通知所有订阅者
+        dep.notify();
+      }
+    });
+  }
+
+  /*
+  第一步
+  1，创建文档碎片，劫持所有dom节点，重绘dom节点
+  2，重绘dom节点，初始化文档碎片绑定数据 实现文档编译 compile
+  */
+  function getDocumentFragment(node, vm) {
+    var flag = document.createDocumentFragment();
+    var child;
+    while (child = node.firstChild) {
+      /*
+       while (child = node.firstChild)
+       相当于 
+       child = node.firstChild
+       while (child)
+       */
+      compile(child, vm);
+      flag.appendChild(child);
+    }
+    node.appendChild(flag);
+  }
+  function compile(node, vm) {
+    /*
+   nodeType 返回数字，表示当前节点类型	
+   1 Element	代表元素	Element, Text, Comment, ProcessingInstruction, CDATASection, EntityReference
+   2	Attr	代表属性	Text, EntityReference
+   3	Text	代表元素或属性中的文本内容。
+   . . . 更多请查看文档
+   */
+    if (node.nodeType === 1) {
+      // 获取当前元素的attr属性
+      var attr = node.attributes;
+      for (let i = 0; i < attr.length; i++) {
+        // nodeName 是attr属性 key 即名称 ， 匹配自定义 v-m
+        if (attr[i].nodeName === 'v-m') {
+          // 获取当前值 即 v-m = "test" 里边的 test 
+          let name = attr[i].nodeValue;
+          // 当前节点输入事件
+          node.addEventListener('keyup', function (e) {
+            vm[name] = e.target.value;
+          });
+          // 页面元素写值  vm.data[name] 即 vm.data['test'] 即 MVVM
+          node.value = vm.data[name];
+          //最后移除标签中的 v-m 属性
+          node.removeAttribute('v-m');
+          // 为每一个节点创建一个 watcher  
+          new Watcher(vm, node, name, "input");
+        }
+      }
+      /*
+      继续递归调用 文档编译 实现 视图更新 ;
+      */
+      if (child = node.firstChild) {
+        /*
+        if (child = node.firstChild)
+        相当于 
+        child = node.firstChild
+        id(child)
+        */
+        compile(child, vm);
+      }
+    }
+    if (node.nodeType === 3) {
+      let reg = /\{\{(.*)\}\}/;
+      if (reg.test(node.nodeValue)) {
+        let name = RegExp.$1.trim();
+        node.nodeValue = vm.data[name];
+        // 为每一个节点创建一个 watcher  
+        new Watcher(vm, node, name, "text");
+      }
+    }
+  }
+
+  /*
+  创建一个构造函数，并生成实例化对象 vm
+  */
+  function Vue(o) {
+    this.id = o.el;
+    this.data = o.data;
+    observe(this.data, this);
+    getDocumentFragment(document.getElementById(this.id), this);
+  }
+  var vm = new Vue({
+    el: 'app',
+    data: {
+      msg: 'HiSen',
+      test: 'Hello,MVVM'
+    }
+  });
+
+</script>
+
+</html>
